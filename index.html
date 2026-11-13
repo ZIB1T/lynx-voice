@@ -59,8 +59,10 @@ async function start() {
     // ходити на наш сервер. Запасний шлях — запит /voice/session з підписом Telegram.
     const h = new URLSearchParams(location.hash.slice(1));
     let s;
-    if (h.get("s") && h.get("k")) {
-      s = {signed_url: h.get("s"), dynamic_variables: {session_key: h.get("k"), client_name: h.get("n") || ""}};
+    if (h.get("k") && (h.get("s") || h.get("a"))) {
+      // з кнопки меню: id агента (агент публічний) + підписаний ключ клієнта; з повідомлення — готове посилання
+      s = {signed_url: h.get("s") || null, agent_id: h.get("a") || null,
+           dynamic_variables: {session_key: h.get("k"), client_name: h.get("n") || ""}};
     } else {
       const r = await fetch("session", {method: "POST", headers: {"Content-Type": "application/json"},
                                         body: JSON.stringify({initData: tg?.initData || ""})});
@@ -68,7 +70,7 @@ async function start() {
       if (!r.ok) throw new Error(s.error || "Помилка з'єднання");
     }
     conv = await Conversation.startSession({
-      signedUrl: s.signed_url,
+      ...(s.signed_url ? {signedUrl: s.signed_url} : {agentId: s.agent_id}),
       connectionType: "websocket",
       dynamicVariables: s.dynamic_variables,
       onConnect: () => { mic.classList.add("live"); mic.textContent = "⏹"; status.textContent = "Говоріть — я слухаю"; },
