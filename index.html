@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Lynx — запис голосом</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root{--bg:var(--tg-theme-bg-color,#0f1115);--fg:var(--tg-theme-text-color,#f2f2f2);
+        --hint:var(--tg-theme-hint-color,#8a8f98);--btn:var(--tg-theme-button-color,#c9a35a);
+        --btn-fg:var(--tg-theme-button-text-color,#111);--card:var(--tg-theme-secondary-bg-color,#1a1d23)}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--fg);font-family:-apple-system,'Segoe UI',Roboto,sans-serif;
+       min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:28px 16px 20px}
+  h1{font-size:21px;font-weight:600;text-align:center}
+  .sub{color:var(--hint);font-size:14px;text-align:center;margin-top:6px;line-height:1.4}
+  #mic{margin:34px 0 18px;width:148px;height:148px;border-radius:50%;border:0;background:var(--btn);
+       color:var(--btn-fg);font-size:56px;cursor:pointer;box-shadow:0 10px 30px rgba(0,0,0,.35);transition:transform .15s}
+  #mic.live{animation:pulse 1.6s infinite}
+  #mic.speaking{transform:scale(1.07)}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(201,163,90,.55)}70%{box-shadow:0 0 0 26px rgba(201,163,90,0)}100%{box-shadow:0 0 0 0 rgba(201,163,90,0)}}
+  #status{font-size:15px;color:var(--hint);min-height:22px;text-align:center}
+  #log{width:100%;max-width:460px;margin-top:20px;display:flex;flex-direction:column;gap:8px}
+  .m{padding:10px 13px;border-radius:14px;font-size:15px;line-height:1.38;max-width:86%}
+  .a{background:var(--card);align-self:flex-start}
+  .u{background:var(--btn);color:var(--btn-fg);align-self:flex-end}
+  .foot{margin-top:auto;padding-top:18px;color:var(--hint);font-size:12px;text-align:center}
+</style>
+</head>
+<body>
+  <h1>Записатися голосом</h1>
+  <div class="sub">Натисніть кнопку й скажіть, на що й коли хочете.<br>Відповідає ШІ-адміністратор салону.</div>
+  <button id="mic" aria-label="Почати розмову">🎙</button>
+  <div id="status">Натисніть, щоб почати</div>
+  <div id="log"></div>
+  <div class="foot">Розмова обробляється ШІ. Запис з'явиться в боті, туди ж прийде нагадування.</div>
+
+<script type="module">
+import { Conversation } from "https://cdn.jsdelivr.net/npm/@elevenlabs/client@1.36.1/+esm";
+
+const tg = window.Telegram?.WebApp;
+tg?.ready(); tg?.expand();
+const mic = document.getElementById("mic"), status = document.getElementById("status"), log = document.getElementById("log");
+let conv = null;
+
+function say(text, who) {
+  const d = document.createElement("div");
+  d.className = "m " + (who === "user" ? "u" : "a");
+  d.textContent = text;
+  log.appendChild(d);
+  d.scrollIntoView({behavior: "smooth", block: "end"});
+}
+
+async function start() {
+  mic.disabled = true; status.textContent = "З'єднуюсь…";
+  try {
+    await navigator.mediaDevices.getUserMedia({audio: true});
+    // Бот передає готову розмову в посиланні (#k=ключ&s=підписане посилання&n=ім'я) — сторінці не треба
+    // ходити на наш сервер. Запасний шлях — запит /voice/session з підписом Telegram.
+    const h = new URLSearchParams(location.hash.slice(1));
+    let s;
+    if (h.get("s") && h.get("k")) {
+      s = {signed_url: h.get("s"), dynamic_variables: {session_key: h.get("k"), client_name: h.get("n") || ""}};
+    } else {
+      const r = await fetch("session", {method: "POST", headers: {"Content-Type": "application/json"},
+                                        body: JSON.stringify({initData: tg?.initData || ""})});
+      s = await r.json();
+      if (!r.ok) throw new Error(s.error || "Помилка з'єднання");
+    }
+    conv = await Conversation.startSession({
+      signedUrl: s.signed_url,
+      connectionType: "websocket",
+      dynamicVariables: s.dynamic_variables,
+      onConnect: () => { mic.classList.add("live"); mic.textContent = "⏹"; status.textContent = "Говоріть — я слухаю"; },
+      onDisconnect: () => { conv = null; mic.classList.remove("live", "speaking"); mic.textContent = "🎙";
+                            status.textContent = "Розмову завершено"; tg?.HapticFeedback?.notificationOccurred("success"); },
+      onModeChange: ({mode}) => { mic.classList.toggle("speaking", mode === "speaking");
+                                  if (conv) status.textContent = mode === "speaking" ? "Адміністратор говорить…" : "Говоріть — я слухаю"; },
+      onMessage: ({message, source}) => message && say(message, source === "user" ? "user" : "ai"),
+      onError: (e) => { status.textContent = "Помилка: " + (e?.message || e); },
+    });
+  } catch (e) {
+    status.textContent = e.name === "NotAllowedError" ? "Дозвольте доступ до мікрофона й спробуйте ще раз" : String(e.message || e);
+  } finally { mic.disabled = false; }
+}
+
+mic.onclick = async () => { if (conv) { await conv.endSession(); } else { start(); } };
+</script>
+</body>
+</html>
